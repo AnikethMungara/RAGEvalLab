@@ -9,7 +9,8 @@
       "Bash(do touch \"/c/Project/rageval/$dir/__init__.py\")",
       "Bash(done)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(gh repo create:*)"
     ]
   }
 }
