@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git --version:*)",
+      "Bash(gh --version:*)",
+      "Bash(gh auth:*)",
+      "Bash(git init:*)",
+      "Bash(for dir in chunking embedding indexing reranking generation metrics analysis config)",
+      "Bash(do touch \"/c/Project/rageval/$dir/__init__.py\")",
+      "Bash(done)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
+    ]
+  }
+}
