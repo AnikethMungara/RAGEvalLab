@@ -7,8 +7,10 @@ from pathlib import Path
 
 from rageval.analysis import (
     ErrorAnalysisSummary,
+    aggregate_by_bucket,
     aggregate_error_analysis,
     analyze_single_query,
+    classify_query,
     format_error_report,
 )
 from rageval.chunking import Chunk, Document, create_chunker
@@ -52,6 +54,7 @@ class QueryResult:
     relevant_ids: list[str]
     retrieval_metrics: dict
     answer_metrics: dict
+    bucket: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -64,6 +67,7 @@ class EvaluationReport:
     answer_metrics: dict[str, float]
     performance_metrics: dict[str, float]
     error_analysis: dict
+    bucket_analysis: dict
     query_results: list[QueryResult]
     timestamp: str
 
@@ -76,6 +80,7 @@ class EvaluationReport:
             "answer_metrics": self.answer_metrics,
             "performance_metrics": self.performance_metrics,
             "error_analysis": self.error_analysis,
+            "bucket_analysis": self.bucket_analysis,
             "query_results": [asdict(qr) for qr in self.query_results],
             "timestamp": self.timestamp,
         }
@@ -102,6 +107,7 @@ class EvaluationReport:
             answer_metrics=data["answer_metrics"],
             performance_metrics=data["performance_metrics"],
             error_analysis=data["error_analysis"],
+            bucket_analysis=data.get("bucket_analysis", {}),
             query_results=query_results,
             timestamp=data["timestamp"],
         )
@@ -153,6 +159,7 @@ class RAGEvaluator:
         answer_metrics_list = []
         error_results = []
         query_results = []
+        bucket_assignments = []
 
         for eval_query, rag_result in zip(dataset.queries, results):
             retrieved_ids = [r.chunk_id for r in rag_result.retrieval.results]
@@ -187,6 +194,25 @@ class RAGEvaluator:
             )
             error_results.append(error_result)
 
+            # Classify query into buckets
+            bucket = classify_query(eval_query.query, eval_query.ground_truth_answer)
+            bucket_assignments.append(bucket)
+
+            retrieval_metrics_dict = {
+                f"precision@{k}": ret_metrics.precision_at_k[k]
+                for k in self.config.metrics.k_values
+            } | {
+                f"recall@{k}": ret_metrics.recall_at_k[k]
+                for k in self.config.metrics.k_values
+            } | {"mrr": ret_metrics.mrr}
+
+            answer_metrics_dict = {
+                "exact_match": ans_metrics.exact_match,
+                "f1": ans_metrics.f1,
+                "precision": ans_metrics.precision,
+                "recall": ans_metrics.recall,
+            }
+
             query_results.append(
                 QueryResult(
                     query=eval_query.query,
@@ -194,27 +220,25 @@ class RAGEvaluator:
                     ground_truth_answer=eval_query.ground_truth_answer,
                     retrieved_ids=retrieved_ids,
                     relevant_ids=list(relevant_ids),
-                    retrieval_metrics={
-                        f"precision@{k}": ret_metrics.precision_at_k[k]
-                        for k in self.config.metrics.k_values
-                    }
-                    | {
-                        f"recall@{k}": ret_metrics.recall_at_k[k]
-                        for k in self.config.metrics.k_values
-                    }
-                    | {"mrr": ret_metrics.mrr},
-                    answer_metrics={
-                        "exact_match": ans_metrics.exact_match,
-                        "f1": ans_metrics.f1,
-                        "precision": ans_metrics.precision,
-                        "recall": ans_metrics.recall,
-                    },
+                    retrieval_metrics=retrieval_metrics_dict,
+                    answer_metrics=answer_metrics_dict,
+                    bucket=bucket.to_dict(),
                 )
             )
 
         agg_retrieval = aggregate_retrieval_metrics(retrieval_metrics_list)
         agg_answer = aggregate_answer_metrics(answer_metrics_list)
         error_summary = aggregate_error_analysis(error_results)
+
+        # Aggregate metrics by query bucket
+        query_result_dicts = [
+            {
+                "retrieval_metrics": qr.retrieval_metrics,
+                "answer_metrics": qr.answer_metrics,
+            }
+            for qr in query_results
+        ]
+        bucket_analysis = aggregate_by_bucket(query_result_dicts, bucket_assignments)
 
         from datetime import datetime
 
@@ -238,6 +262,7 @@ class RAGEvaluator:
                 "error_counts": {k.value: v for k, v in error_summary.error_counts.items()},
                 "error_rates": {k.value: v for k, v in error_summary.error_rates.items()},
             },
+            bucket_analysis=bucket_analysis.to_dict(),
             query_results=query_results,
             timestamp=datetime.now().isoformat(),
         )
